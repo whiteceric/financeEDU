@@ -21,10 +21,10 @@ from kivy.uix.dropdown import DropDown
 import json
 from os.path import join
 
+import stock_scrape
 import layout_maker as lm
 from layout_maker import CustomButton, CustomLayout, CustomLayoutItem
 from stocks import Portfolio, Position, Share
-import iex
 from pygtrie import CharTrie
 
 # Set the app size
@@ -128,9 +128,12 @@ class HomeScreen(Screen):
         self.layout.add_item(CustomButton(menu_img, on_release_func=self.show_menu, alignment='left'))
 
         self.personal_value = lm.createLabel(text= "$-,---.--", font_size= 50, rel_size=(1, .1))
+        self.personal_value_change = lm.createLabel(text= "+0.00%", font_size= 25, rel_size=(1, .05))
         self.cash_value = lm.createLabel(text= "$---.--", font_size= 50, rel_size=(1, .1))
         
         self.layout.add_item(self.personal_value)
+        self.layout.add_item(self.personal_value_change)
+
         self.layout.add_item(lm.createLabel(text='Personal Value', font_size=20, 
                                         rel_size=(1, .05), color= DARK_GREEN))
         self.layout.add_item(self.cash_value)
@@ -142,8 +145,6 @@ class HomeScreen(Screen):
 
     def display_portfolio(self):
         # Create a button for each position:
-        total_value = 0
-
         share_section = CustomLayout()
         row = []
         for position in current_portfolio.positions:
@@ -156,14 +157,12 @@ class HomeScreen(Screen):
             num_shares = position.num_shares
             day_change = position.day_change
             current_price = position.current_price
-            total_value += current_price
 
             #get the right arrow image based on day change
             icon = 'images/up_arrow.png' if day_change >= 0 else 'images/down_arrow.png'
 
             # each position will have a CustomButton
-            col = self.create_share_button(icon, tag, f'${current_price:,.2f}', 
-                                                f'(${day_change:+,.2f})')
+            col = self.create_share_button(icon, tag, f'${current_price:,.2f}', f'(${day_change:+,.2f})')
             row.append(col)
 
         if row and len(row) % 3 == 0:
@@ -177,11 +176,17 @@ class HomeScreen(Screen):
         # add the share section to the page
         if self.share_section:
             self.remove_widget(self.share_section)
-        self.share_section = share_section.create(size_hint=(1,.65), pos_hint={"top": .65})
+        self.share_section = share_section.create(size_hint=(1,.60), pos_hint={"top": .60})
         self.add_widget(self.share_section)
         # update personal value label
         current_portfolio.update_value()
         self.personal_value.widget.text = f'${current_portfolio.current_value:,.2f}'
+        self.personal_value_change.widget.text = f'{"+" if current_portfolio.total_gain_loss >= 0 else "-"}${abs(current_portfolio.total_gain_loss):,.2f}' 
+        if current_portfolio.total_gain_loss < 0:
+            self.personal_value_change.widget.color = RED
+        else:
+            self.personal_value_change.widget.color = WHITE
+
         self.cash_value.widget.text = f'${current_portfolio.cash:,.2f}'
         portfolio_changed = False
 
@@ -248,7 +253,7 @@ class StockDetailScreen(Screen):
         # graph
         self.graph = Graph(x_ticks_major=1, tick_color = (0,0,0,.5), xlabel='Days',
               y_grid_label=True, x_grid_label=True, precision='%.0f', padding=5,
-              x_grid=True, y_grid=True, xmin=-7, xmax=-1, ymin=0, ymax=100,
+              x_grid=True, y_grid=True, xmin=-5, xmax=-1, ymin=0, ymax=100,
               border_color = (0,0,0,0), label_options = {'color': (0,0,0,1)})        
 
         self.plot = [(i-7, .3*i*100) for i in range(7)]
@@ -316,7 +321,7 @@ class SymbolSearch(TextInput):
             self.dropdown_items = self.dropdown_items[:50]
         for tag,_ in self.dropdown_items:
             button = Button(text=tag, bold=True, size_hint_y=None, height=Window.size[1] * .04,
-                            background_color=DARK_GREEN, on_release=lambda btn: self.dropdown_selected(btn))
+                            background_color=DARK_GREEN, on_press=lambda btn: self.dropdown_selected(btn))
             self.dropdown.add_widget(button)
 
     def on_focus(self, text_input, focused):
@@ -383,7 +388,7 @@ class ShareQuantityInput(TextInput):
         """
         try:
             num = int(substring)
-            if len(self.text) >= 2:
+            if len(self.text) >= 3:
                 substring = ''
         except:
             substring = ''
@@ -426,7 +431,7 @@ class TradeScreen(Screen):
         self.num_shares_owned = lm.createLabel(rel_size= (1, .1))
         self.layout.add_item(self.num_shares_owned)
         self.num_of_shares_label = lm.createLabel(text_rel_size=(.5, .1))
-        self.num_share_selection = CustomLayoutItem(ShareQuantityInput(trade_screen=self), rel_size=(.15, .06))
+        self.num_share_selection = CustomLayoutItem(ShareQuantityInput(trade_screen=self), rel_size=(.225, .06))
         anchor = AnchorLayout(size_hint=(.5, .1), anchor_x='center')
         anchor.add_widget(self.num_share_selection.widget)
         anchor_item = CustomLayoutItem(anchor, rel_size=(.5, .07))
@@ -462,6 +467,7 @@ class TradeScreen(Screen):
         """
         Show no symbol on the trade screen
         """
+        self.current_symbol = None
         self.symbol_search.text = 'Search'
         self.current_price_label.widget.text = f'$0'
         self.current_price = 0
@@ -477,6 +483,9 @@ class TradeScreen(Screen):
         """
         position = Position(symbol)
         position.update_price()
+        if position.current_price <= 0:
+            self.display_no_symbol()
+            return
         self.current_symbol = symbol
         self.update_cash_value()
         self.symbol_search.text = self.current_symbol
@@ -532,7 +541,7 @@ class TradeScreen(Screen):
         disable the confirm button if the estimated value is higher than the current cash value or
         if the number of shares selected is higher than the number of shares owned.
         """
-        self.confirm_button.disabled = self.num_shares <= 0 or (trade_mode == 'BUY' and self.estimated_value > current_portfolio.cash) or (trade_mode == 'SELL' and (self.share_count == 0 or self.num_shares > self.share_count))
+        self.confirm_button.disabled = self.current_symbol == None or self.num_shares <= 0 or (trade_mode == 'BUY' and self.estimated_value > current_portfolio.cash) or (trade_mode == 'SELL' and (self.share_count == 0 or self.num_shares > self.share_count))
 
     def more_info(self, button):
         """
@@ -571,7 +580,7 @@ class ConfirmTradeScreen(Screen):
         self.add_widget(self.layout.create())
 
     def on_pre_enter(self):
-        self.label.widget.text = f'{current_trade[0]} {current_trade[2]} shares of {current_trade[1]}?'
+        self.label.widget.text = f'{current_trade[0]} {current_trade[2]} share{"s" if current_trade[2] != 1 else ""} of {current_trade[1]}?'
 
     def trade_confirmed(self, button):
         """
@@ -725,10 +734,10 @@ class NewPortfolioScreen(Screen):
         name = self.name_input.text
         starting_cash = float(self.starting_cash_input.text[1:].replace(',', ''))
         new_portfolio = Portfolio(name, starting_cash)
-        save_portfolio()
         user_data['PORTFOLIOS'].append(new_portfolio.get_save_dict())
         load_portfolio(len(user_data['PORTFOLIOS']) - 1)
         screen_transition(self.manager, None, 'home', SLIDE_UP)
+        save_portfolio()
 
 class WindowManager(ScreenManager):
     pass
@@ -762,8 +771,8 @@ class TryInvestApp(App):
         tag_trie = CharTrie()
         for tag in symbol_data:
             tag_trie[tag] = True
-        iex.stock_data_cache = stock_data
-        iex.stock_data_save_func = lambda data: self.save_storage_data(data, 'stocks.json')
+        stock_scrape.stock_data_cache = stock_data
+        stock_scrape.stock_data_save_func = lambda data: self.save_storage_data(data, 'stocks.json')
         load_portfolio(0)
         def _save_portfolio_func():
             global portfolio_changed
