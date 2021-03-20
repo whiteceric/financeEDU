@@ -252,7 +252,7 @@ class StockDetailScreen(Screen):
 
         # graph
         self.graph = Graph(x_ticks_major=1, tick_color = (0,0,0,.5), xlabel='Days',
-              y_grid_label=True, x_grid_label=True, precision='%.0f', padding=5,
+              y_grid_label=True, x_grid_label=True, precision='%.2f', padding=5,
               x_grid=True, y_grid=True, xmin=-5, xmax=-1, ymin=0, ymax=100,
               border_color = (0,0,0,0), label_options = {'color': (0,0,0,1)})        
 
