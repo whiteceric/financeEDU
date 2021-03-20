@@ -1,4 +1,4 @@
-import iex
+import stock_scrape
 
 class Portfolio():
     @staticmethod
@@ -15,15 +15,17 @@ class Portfolio():
         self.name = name
         self.positions = []
         self.cash = cash
+        if initial_value is None:
+            self.initial_value = cash
+        else:
+            self.initial_value = initial_value
+
         if current_value is None:
             self.update_value()
         else:
             self.current_value = current_value
 
-        if initial_value is None:
-            self.initial_value = cash
-        else:
-            self.initial_value = initial_value
+        self.update_value()
         
 
     def __getitem__(self, tag):
@@ -71,6 +73,7 @@ class Portfolio():
         Updates the total value of this portfolio by checking current prices
         """
         self.current_value = sum(position.get_value() for position in self.positions) + self.cash
+        self.total_gain_loss = self.current_value - self.initial_value
 
     def get_save_dict(self):
         """
@@ -121,7 +124,7 @@ class Position():
             self.update_price()
             cost = self.current_price
         if date is None:
-            date = iex.get_date_str(iex.today())
+            date = stock_scrape.get_date_str(stock_scrape.today())
         for _ in range(num_shares):
             self.shares.append(Share(self.tag + ":" + str(len(self.shares) + 1), cost, date))
             self.total_cost_basis += cost
@@ -150,17 +153,9 @@ class Position():
 
     def update_price(self):
         """
-        Updates the current price, previous close, and day change for this stock
+        Updates the current price, and day change for this stock
         """
-        self.prev_close = iex.get_prev_day_close(self.tag)
-        self.current_price = iex.get_current_price(self.tag) if iex.market_open() else self.prev_close
-        
-    @property
-    def day_change(self, percent=False):
-        """
-        Returns the change in per share price compared to the most recent 
-        """
-        return self.current_price - self.prev_close
+        self.current_price, self.day_change = stock_scrape.get_current_price(self.tag, get_day_change=True) 
 
     @property
     def num_shares(self):
@@ -170,7 +165,7 @@ class Position():
         """
         Returns the closing prices from the previous week for this Stock
         """
-        return iex.get_prev_week_endpoints(self.tag)
+        return stock_scrape.get_prev_week_endpoints(self.tag)
 
     def get_save_dict(self):
         """

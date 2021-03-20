@@ -1,3 +1,5 @@
 .vscode
 env
+kivy
+kivy_wheel
 .DS_Store
